@@ -5,8 +5,20 @@ dist
 tmp
 out-tsc
 
+# Vercel build output and local project linkage, written by the deploy
+# workflow and by `vercel pull`. Both are build artefacts.
+.vercel
+.output
+
 # dependencies
 node_modules
+
+# env
+.env
+.env.local
+
+# generated
+apps/api/src/database/prisma/generated
 
 # IDEs and editors
 /.idea
@@ -43,3 +55,5 @@ Thumbs.db
 .nx/migrate-runs
 .claude/worktrees
 .claude/settings.local.json
+
+.nx/polygraph

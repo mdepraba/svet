@@ -1,0 +1,19 @@
+{
+  "name": "schemas",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "libs/schemas/src",
+  "projectType": "library",
+  "tags": [],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "outputs": ["{options.outputPath}"],
+      "options": {
+        "outputPath": "dist/libs/schemas",
+        "main": "libs/schemas/src/index.ts",
+        "tsConfig": "libs/schemas/tsconfig.lib.json",
+        "assets": ["libs/schemas/*.md"]
+      }
+    }
+  }
+}

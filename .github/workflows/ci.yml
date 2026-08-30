@@ -30,15 +30,15 @@ jobs:
       web: ${{ steps.affected.outputs.web }}
       api: ${{ steps.affected.outputs.api }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # `nx affected` compares against a base commit, which has to be in
           # the clone for the comparison to mean anything.
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -48,7 +48,7 @@ jobs:
       # Works out the SHAs `nx affected` should compare. On a pull request that
       # is the merge base; on master it is the last successful run of this
       # workflow, so nothing is skipped just because a run failed.
-      - uses: nrwl/nx-set-shas@v4
+      - uses: nrwl/nx-set-shas@v5
 
       - name: Lint, typecheck and build affected projects
         run: pnpm nx affected -t lint typecheck build --parallel=3
@@ -84,9 +84,38 @@ jobs:
       # which is what keeps CORS out of the picture.
       VITE_API_URL: ${{ vars.VITE_API_URL }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      # An unset secret reaches the CLI as an empty string, and `--token=`
+      # fails with "missing a value" several steps and one full install later.
+      # Naming what is missing up front is worth the few lines.
+      - name: Check deployment credentials are configured
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          MIGRATE_DATABASE_URL: ${{ secrets.MIGRATE_DATABASE_URL }}
+          IS_PRODUCTION: ${{ github.ref == 'refs/heads/dev' }}
+        run: |
+          ok=true
+          require() {
+            if [ -z "$2" ]; then
+              echo "  missing: $1"
+              ok=false
+            fi
+          }
+          require "VERCEL_TOKEN (secret)" "$VERCEL_TOKEN"
+          require "VERCEL_ORG_ID (secret)" "$VERCEL_ORG_ID"
+          require "VERCEL_PROJECT_ID (secret)" "$VERCEL_PROJECT_ID"
+          require "VITE_API_URL (repository variable, not a secret)" "$VITE_API_URL"
+          if [ "$IS_PRODUCTION" = "true" ]; then
+            require "MIGRATE_DATABASE_URL (secret)" "$MIGRATE_DATABASE_URL"
+          fi
+          if [ "$ok" = "false" ]; then
+            echo "::error::Deployment is not configured. See the missing entries above, and DEPLOYMENT.md section 4."
+            exit 1
+          fi
+          echo "All deployment credentials present."
+
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: pnpm
@@ -99,8 +128,21 @@ jobs:
 
       # Writes .vercel/project.json from the org and project ids, which is what
       # `deploy --prebuilt` reads to know where it is shipping to.
+      #
+      # When this fails it is almost never the working directory the CLI
+      # blames — there is no .vercel here to remove. It means the token cannot
+      # see a project with that org id plus project id.
       - name: Link Vercel project
-        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/dev' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
+        run: |
+          if ! vercel pull --yes --environment=${{ github.ref == 'refs/heads/dev' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}; then
+            echo "::error::Vercel could not resolve the project."
+            echo "The ids are set but the token cannot see that project. Check, in order:"
+            echo "  1. VERCEL_ORG_ID is the team/account id (team_...), not a slug or username."
+            echo "  2. VERCEL_PROJECT_ID is the id (prj_...), not the project name."
+            echo "  3. The token was created in the same scope the project lives in."
+            echo "Run 'vercel link' locally and copy .vercel/project.json verbatim."
+            exit 1
+          fi
 
       # Both apps, then folded into one .vercel/output at the workspace root:
       # static assets and the SSR function from web, the Nest function from

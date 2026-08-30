@@ -57,3 +57,8 @@ Thumbs.db
 .claude/settings.local.json
 
 .nx/polygraph
+
+# Local secrets never get committed, but the template that documents them
+# must be — DEPLOYMENT.md sends you to it.
+.env*
+!.env.example

@@ -27,6 +27,15 @@ async function createApp(): Promise<NestFastifyApplication> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter(),
+    {
+      // Nest's default is to `process.exit(1)` when bootstrapping fails. On a
+      // server that is reasonable — die loudly and let the supervisor restart.
+      // In a function it destroys the only chance to say what went wrong: the
+      // process is gone before the handler below can answer, and the caller
+      // gets an opaque FUNCTION_INVOCATION_FAILED with nothing in it. Making
+      // it throw instead lets the catch report the real cause.
+      abortOnError: false,
+    },
   );
 
   configureApp(app);
@@ -44,11 +53,36 @@ export default async function handler(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  appPromise ??= createApp();
+  try {
+    appPromise ??= createApp();
 
-  const app = await appPromise;
+    const app = await appPromise;
 
-  // Hand the raw Node request to Fastify's own server the way a real socket
-  // would, so routing, hooks, and serialisation all behave as they do locally.
-  app.getHttpAdapter().getInstance().server.emit('request', req, res);
+    // Hand the raw Node request to Fastify's own server the way a real socket
+    // would, so routing, hooks, and serialisation all behave as they do locally.
+    app.getHttpAdapter().getInstance().server.emit('request', req, res);
+  } catch (error) {
+    // Two things matter when a bootstrap fails, and neither happens by default.
+    //
+    // Clear the cached promise: it is the *promise* that is memoised, so a
+    // rejected one would be inherited by every later request on this warm
+    // instance, turning a transient database blip into a permanently dead
+    // instance that only a redeploy could revive.
+    appPromise = undefined;
+
+    // And say why. Left alone, a throw here surfaces to the caller as an
+    // opaque FUNCTION_INVOCATION_FAILED with nothing in it to act on; the
+    // cause is almost always a missing environment variable, which this line
+    // puts in the platform's logs verbatim.
+    console.error('The API failed to start:', error);
+
+    res.statusCode = 500;
+    res.setHeader('content-type', 'application/json');
+    res.end(
+      JSON.stringify({
+        statusCode: 500,
+        message: 'The API failed to start. Check the deployment logs.',
+      }),
+    );
+  }
 }

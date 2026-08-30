@@ -126,6 +126,14 @@
         "cwd": "apps/api"
       }
     },
+    "db-deploy": {
+      "executor": "nx:run-commands",
+      "cache": false,
+      "options": {
+        "command": "prisma migrate deploy",
+        "cwd": "apps/api"
+      }
+    },
     "db-studio": {
       "executor": "nx:run-commands",
       "options": {

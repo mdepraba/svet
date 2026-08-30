@@ -1,96 +1,191 @@
-# SvetMonorepo
+# SVET
 
-<a alt="Nx logo" href="https://nx.dev" target="_blank" rel="noreferrer"><img src="https://raw.githubusercontent.com/nrwl/nx/master/images/nx-logo.png" width="45"></a>
+Practice-management software for a veterinary clinic: the people who own the
+animals, the animals themselves, what was done to them, what it cost, and what
+came off the shelf to do it.
 
-✨ Your new, shiny [Nx workspace](https://nx.dev) is ready ✨.
+This is an [Nx](https://nx.dev) monorepo holding two deployable apps and the
+contract between them.
 
-[Learn more about this workspace setup and its capabilities](https://nx.dev/getting-started/intro#learn-nx?utm_source=nx_project&amp;utm_medium=readme&amp;utm_campaign=nx_projects) or run `npx nx graph` to visually explore what was created. Now, let's get you up to speed!
+| Project   | Path           | What it is                                                        |
+| --------- | -------------- | ----------------------------------------------------------------- |
+| `api`     | `apps/api`     | NestJS 11 on Fastify, Prisma 7, PostgreSQL                        |
+| `web`     | `apps/web`     | TanStack Start (React 19, Vite, Nitro), Tailwind 4, shadcn/radix  |
+| `schemas` | `libs/schemas` | Zod schemas both apps import — the shared request/response shapes |
 
-## Run tasks
+The split that matters most here is the third one. `libs/schemas` is the single
+definition of every payload: the API builds its DTOs from those schemas, and the
+web client parses responses with the same objects. A field renamed in one place
+breaks the build in the other, which is the point.
 
-To run tasks with Nx use:
+## Prerequisites
 
-```sh
-npx nx <target> <project-name>
+- **Node.js 24+** — enforced by `engines` in `package.json`
+- **pnpm 11** — the repo pins `pnpm@11.22.0` via `packageManager`
+- **PostgreSQL** — any reachable instance, local or hosted
+
+## First run
+
+```bash
+pnpm install
+
+# Environment. The API reads the root file first (see Configuration below).
+cp .env.example .env
+
+# Generate the Prisma client, then create the tables.
+pnpm nx db-generate api
+pnpm nx db-push api        # or: pnpm nx db-migrate api
+
+# Two terminals, or two tabs.
+pnpm nx serve api          # http://localhost:3000/v1
+pnpm nx serve web          # http://localhost:4200
 ```
 
-For example:
+Before the API will start you must fill in `JWT_ACCESS_SECRET` and
+`JWT_REFRESH_SECRET` — it refuses to boot without them rather than sign tokens
+with a guessable key. Generate each with:
 
-```sh
-npx nx build myproject
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 ```
 
-These targets are either [inferred automatically](https://nx.dev/concepts/inferred-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) or defined in the `project.json` or `package.json` files.
+There is no seeded login. Register the first account through the web app's
+`/register` screen; it is given the role named by `AUTH_DEFAULT_ROLE`
+(`FRONT-DESK` by default), which must already exist in the `role` table.
 
-[More about running tasks in the docs &raquo;](https://nx.dev/features/run-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+## Everyday commands
 
-## Add new projects
+Run tasks through Nx rather than the underlying tool — that is what gets you
+caching and the dependency ordering (`build` will not run before
+`db-generate`).
 
-While you could add new projects to your workspace manually, you might want to leverage [Nx plugins](https://nx.dev/concepts/nx-plugins?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) and their [code generation](https://nx.dev/features/generate-code?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) feature.
+```bash
+# Serve
+pnpm nx serve api                 # watch-mode API on :3000
+pnpm nx serve web                 # Vite dev server on :4200
 
-To install a new plugin you can use the `nx add` command. Here's an example of adding the React plugin:
-```sh
-npx nx add @nx/react
+# Check
+pnpm nx run-many -t lint          # ESLint across all projects
+pnpm nx typecheck web             # tsc --noEmit; web is the only project with this target
+pnpm nx affected -t lint typecheck build   # what CI runs
+
+# Build
+pnpm nx build api                 # -> dist/apps/api
+pnpm nx build web                 # -> apps/web/.output (Nitro)
+
+# Database
+pnpm nx db-generate api           # regenerate the Prisma client
+pnpm nx db-migrate api            # create + apply a migration
+pnpm nx db-push api               # push schema without a migration
+pnpm nx db-studio api             # Prisma Studio
+
+# Format
+pnpm prettier --write "**/*.md"
 ```
 
-Use the plugin's generator to create new projects. For example, to create a new React app or library:
+`pnpm nx graph` draws the project graph if you want to see the dependencies.
 
-```sh
-# Generate an app
-npx nx g @nx/react:app demo
+**There is no test target.** No test runner is configured in this workspace
+yet, so `nx test` and `nx e2e` will not find anything to run.
 
-# Generate a library
-npx nx g @nx/react:lib some-lib
+## Configuration
+
+Environment variables are read by `ConfigModule` from **two files, root
+first**: `.env`, then `apps/api/.env`. The first file to define a key wins, so
+a value in the root `.env` shadows the same key in `apps/api/.env`.
+
+Both have a checked-in template — `.env.example` and `apps/api/.env.example` —
+and the two templates do not cover quite the same ground, so read the root one
+first.
+
+| Variable                                                                                   | Required           | Notes                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `DATABASE_URL`                                                                             | yes                | PostgreSQL connection string                                                                                                                           |
+| `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`                                                 | yes                | The API will not start without them                                                                                                                    |
+| `FRONTEND_URL`                                                                             | —                  | CORS origin for the API. Defaults to `http://localhost:4200`                                                                                           |
+| `PORT`                                                                                     | —                  | API port. Defaults to `3000`                                                                                                                           |
+| `PUBLIC_API_URL`                                                                           | —                  | This API's public origin **including** `/v1`. Defaults to `http://localhost:$PORT/v1`; must match the provider's registered redirect URI byte for byte |
+| `VITE_API_URL`                                                                             | —                  | Where the web app looks for the API. Defaults to `http://localhost:3000/v1`                                                                            |
+| `AUTH_DEFAULT_ROLE`                                                                        | —                  | Role given to self-registered accounts. Defaults to `FRONT-DESK`                                                                                       |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`                                                | for Google sign-in | Redirect URI: `$PUBLIC_API_URL/auth/oauth/google/callback`                                                                                             |
+| `CRON_SECRET`                                                                              | deployed           | Bearer token for `/v1/cron/*`. Unset means those routes refuse everyone                                                                                |
+| `JWT_ISSUER`, `JWT_ACCESS_TTL`, `JWT_REFRESH_TTL`, `OAUTH_STATE_SECRET`, `OAUTH_STATE_TTL` | —                  | Optional; defaults documented in `.env.example`                                                                                                        |
+
+`VITE_API_URL` is read at **build** time by Vite, not at runtime — changing it
+means rebuilding the web app, not restarting it.
+
+## How the pieces fit
+
+```
+browser ──▶ apps/web  ──HTTP──▶ apps/api ──▶ PostgreSQL
+             (Vite/Nitro)        (Fastify)      (Prisma)
+                 │                   │
+                 └──── libs/schemas ─┘
+                      Zod: one definition of every payload
 ```
 
-You can use `npx nx list` to get a list of installed plugins. Then, run `npx nx list <plugin-name>` to learn about more specific capabilities of a particular plugin. Alternatively, [install Nx Console](https://nx.dev/getting-started/editor-setup?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) to browse plugins and generators in your IDE.
+A request into the API passes, in order: the global `ZodValidationPipe`
+(validates the DTO), the global `AccessTokenGuard` (rejects anything without a
+bearer token unless the handler is `@Public()`), then the controller and its
+service. Prisma errors on the way out are translated to HTTP by
+`PrismaClientExceptionFilter`. All three are installed in
+[`apps/api/src/app/app.module.ts`](apps/api/src/app/app.module.ts) and
+[`configure-app.ts`](apps/api/src/app/configure-app.ts).
 
-[Learn more about Nx plugins &raquo;](https://nx.dev/concepts/nx-plugins?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) | [Browse the plugin registry &raquo;](https://nx.dev/plugin-registry?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+The API is served under the global prefix `/v1`, and its OpenAPI UI sits
+outside that prefix at `/api-docs`.
 
-## Set up CI!
+## Path aliases
 
-### Step 1
+| Alias                    | Resolves to        | Available in |
+| ------------------------ | ------------------ | ------------ |
+| `@svet-monorepo/schemas` | `libs/schemas/src` | both apps    |
+| `@/*`                    | that app's `src/*` | both apps    |
+| `#/*`                    | `apps/web/src/*`   | web only     |
 
-To connect to Nx Cloud, run the following command:
+Note that `tsconfig.base.json` sets `strict: false`, and `apps/web` turns
+`strict` back on for itself. New code in the API is therefore not strict-checked
+by default.
 
-```sh
-npx nx connect
-```
+## Documentation map
 
-Connecting to Nx Cloud ensures a [fast and scalable CI](https://nx.dev/ci/intro/why-nx-cloud?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects) pipeline. It includes features such as:
+| Document                                                     | Covers                                           |
+| ------------------------------------------------------------ | ------------------------------------------------ |
+| [`apps/api/README.md`](apps/api/README.md)                   | API architecture, module anatomy, database work  |
+| [`apps/web/README.md`](apps/web/README.md)                   | Routing, features, data layer, styling           |
+| [`libs/schemas/README.md`](libs/schemas/README.md)           | The shared contract and how to extend it         |
+| [`DEPLOYMENT.md`](DEPLOYMENT.md)                             | CI and Vercel deploys                            |
+| [`.claude/reference/business/`](.claude/reference/business/) | What the app is for, in business terms — no code |
+| [`CLAUDE.md`](CLAUDE.md)                                     | Conventions for agents working in this repo      |
+| `http://localhost:3000/api-docs`                             | Live endpoint reference (run the API first)      |
 
-- [Remote caching](https://nx.dev/ci/features/remote-cache?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Task distribution across multiple machines](https://nx.dev/ci/features/distribute-task-execution?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Automated e2e test splitting](https://nx.dev/ci/features/split-e2e-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Task flakiness detection and rerunning](https://nx.dev/ci/features/flaky-tasks?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+Start with the business reference if you are new to the domain — it defines
+_owner_, _patient_, _visit_, and the rest, and the code uses those words
+literally.
 
-### Step 2
+## Troubleshooting
 
-Use the following command to configure a CI workflow for your workspace:
+**`@prisma/client did not initialize yet`**
+Run `pnpm nx db-generate api`. The `build` target depends on it, but your
+editor's TypeScript server and a bare `tsc` do not.
 
-```sh
-npx nx g ci-workflow
-```
+**The API exits at startup complaining about a JWT secret**
+`JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` are required. See First run.
 
-[Learn more about Nx on CI](https://nx.dev/ci/intro/ci-with-nx#ready-get-started-with-your-provider?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+**Every API request comes back 401**
+`AccessTokenGuard` is global — routes are closed unless marked `@Public()`.
+Send a bearer token.
 
-## Install Nx Console
+**A `PATCH` or `DELETE` from the browser fails CORS preflight**
+`FRONTEND_URL` must match the web app's origin exactly. `@fastify/cors`
+defaults to GET/HEAD/POST, which is why `configure-app.ts` lists the verbs
+explicitly.
 
-Nx Console is an editor extension that enriches your developer experience. It lets you run tasks, generate code, and improves code autocompletion in your IDE. It is available for VSCode and IntelliJ.
+**Registration fails on a fresh database**
+`AUTH_DEFAULT_ROLE` names a row that must exist in `role` and not be
+soft-deleted; otherwise sign-up raises `RoleUnavailableError`. The name is
+matched case-insensitively. Create the role first — `pnpm nx db-studio api` is
+the quickest way.
 
-[Install Nx Console &raquo;](https://nx.dev/getting-started/editor-setup?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-## Useful links
-
-Learn more:
-
-- [Learn more about this workspace setup](https://nx.dev/getting-started/intro#learn-nx?utm_source=nx_project&amp;utm_medium=readme&amp;utm_campaign=nx_projects)
-- [Learn about Nx on CI](https://nx.dev/ci/intro/ci-with-nx?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [Releasing Packages with Nx release](https://nx.dev/features/manage-releases?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-- [What are Nx plugins?](https://nx.dev/concepts/nx-plugins?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
-
-And join the Nx community:
-- [Discord](https://go.nx.dev/community)
-- [Follow us on X](https://twitter.com/nxdevtools) or [LinkedIn](https://www.linkedin.com/company/nrwl)
-- [Our Youtube channel](https://www.youtube.com/@nxdevtools)
-- [Our blog](https://nx.dev/blog?utm_source=nx_project&utm_medium=readme&utm_campaign=nx_projects)
+**An Nx task uses a stale result**
+`pnpm nx reset` clears the local cache.

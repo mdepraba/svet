@@ -1,0 +1,168 @@
+name: CI
+
+# Deploys are gated on the checks, and gating across workflow files needs
+# `workflow_run` plumbing that loses the pull request context. Keeping both in
+# one file means `needs:` does the job.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  # A second push to the same branch makes the first one irrelevant — except on
+  # master, where cancelling could leave a half-finished deploy as the latest.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+env:
+  # Nx needs a value here to plan the graph; `prisma generate` reads it but
+  # never connects. The real one is set per environment in Vercel.
+  DATABASE_URL: postgresql://build:build@localhost:5432/build
+  # Set for every job so the check job and the deploy job produce byte-identical
+  # web builds — which is what lets a remote cache turn the second one into a hit.
+  NITRO_PRESET: vercel
+
+jobs:
+  check:
+    name: Lint, typecheck, build
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.affected.outputs.web }}
+      api: ${{ steps.affected.outputs.api }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `nx affected` compares against a base commit, which has to be in
+          # the clone for the comparison to mean anything.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Works out the SHAs `nx affected` should compare. On a pull request that
+      # is the merge base; on master it is the last successful run of this
+      # workflow, so nothing is skipped just because a run failed.
+      - uses: nrwl/nx-set-shas@v4
+
+      - name: Lint, typecheck and build affected projects
+        run: pnpm nx affected -t lint typecheck build --parallel=3
+
+      - name: Work out which apps need deploying
+        id: affected
+        run: |
+          affected="$(pnpm nx show projects --affected --json)"
+          echo "affected: $affected"
+          for project in web api; do
+            if echo "$affected" | grep -q "\"$project\""; then
+              echo "$project=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$project=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
+
+  deploy-web:
+    name: Deploy web
+    needs: check
+    if: needs.check.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref == 'refs/heads/master' && 'production' || 'preview' }}
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_WEB }}
+      # Baked into the client bundle at build time, so it has to be right
+      # before the build runs rather than set in Vercel's dashboard.
+      VITE_API_URL: ${{ vars.VITE_API_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # npm rather than pnpm: a global pnpm install needs PNPM_HOME on PATH,
+      # which the setup action does not arrange for.
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      # Writes apps/web/.vercel/project.json from the org and project ids, which
+      # is what `deploy --prebuilt` reads to know where it is shipping to.
+      - name: Link Vercel project
+        working-directory: apps/web
+        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/master' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      # Nitro's `vercel` preset writes apps/web/.vercel/output in the Build
+      # Output API v3 layout, so Vercel itself never builds anything.
+      - name: Build
+        run: pnpm nx build web
+
+      - name: Deploy
+        id: deploy
+        working-directory: apps/web
+        run: |
+          url="$(vercel deploy --prebuilt ${{ github.ref == 'refs/heads/master' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }})"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed to $url"
+
+  deploy-api:
+    name: Deploy api
+    needs: check
+    if: needs.check.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref == 'refs/heads/master' && 'production' || 'preview' }}
+      url: ${{ steps.deploy.outputs.url }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_API }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      - name: Link Vercel project
+        working-directory: apps/api
+        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/master' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
+
+      # Bundles src/serverless.ts into apps/api/.vercel/output and writes the
+      # routing and cron config next to it.
+      - name: Build
+        run: pnpm nx build-vercel api
+
+      # Before the new code goes live, not after, so the schema is never behind
+      # the code reading it. `migrate deploy` only applies committed migrations
+      # and never generates or resets — it is the one Prisma command that is
+      # safe to run unattended.
+      #
+      # MIGRATE_DATABASE_URL should be a *direct* connection: a transaction
+      # pooler cannot run the DDL and advisory locks a migration needs.
+      - name: Apply database migrations
+        if: github.ref == 'refs/heads/master'
+        working-directory: apps/api
+        env:
+          DATABASE_URL: ${{ secrets.MIGRATE_DATABASE_URL }}
+        run: pnpm exec prisma migrate deploy
+
+      - name: Deploy
+        id: deploy
+        working-directory: apps/api
+        run: |
+          url="$(vercel deploy --prebuilt ${{ github.ref == 'refs/heads/master' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }})"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Deployed to $url"

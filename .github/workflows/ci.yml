@@ -5,14 +5,14 @@ name: CI
 # one file means `needs:` does the job.
 on:
   push:
-    branches: [master]
+    branches: [dev]
   pull_request:
 
 concurrency:
   # A second push to the same branch makes the first one irrelevant — except on
   # master, where cancelling could leave a half-finished deploy as the latest.
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/dev' }}
 
 env:
   # Nx needs a value here to plan the graph; `prisma generate` reads it but
@@ -66,19 +66,22 @@ jobs:
             fi
           done
 
-  deploy-web:
-    name: Deploy web
+  deploy:
+    name: Deploy
     needs: check
-    if: needs.check.outputs.web == 'true'
+    # One deployment artifact contains both apps, so it is rebuilt whenever
+    # either changed. A docs-only commit deploys nothing.
+    if: needs.check.outputs.web == 'true' || needs.check.outputs.api == 'true'
     runs-on: ubuntu-latest
     environment:
-      name: ${{ github.ref == 'refs/heads/master' && 'production' || 'preview' }}
+      name: ${{ github.ref == 'refs/heads/dev' && 'production' || 'preview' }}
       url: ${{ steps.deploy.outputs.url }}
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_WEB }}
-      # Baked into the client bundle at build time, so it has to be right
-      # before the build runs rather than set in Vercel's dashboard.
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      # Compiled into the client bundle, so it has to be correct before the
+      # build rather than set in Vercel's dashboard. Same origin as the site,
+      # which is what keeps CORS out of the picture.
       VITE_API_URL: ${{ vars.VITE_API_URL }}
     steps:
       - uses: actions/checkout@v4
@@ -94,56 +97,19 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      # Writes apps/web/.vercel/project.json from the org and project ids, which
-      # is what `deploy --prebuilt` reads to know where it is shipping to.
+      # Writes .vercel/project.json from the org and project ids, which is what
+      # `deploy --prebuilt` reads to know where it is shipping to.
       - name: Link Vercel project
-        working-directory: apps/web
-        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/master' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/dev' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
 
-      # Nitro's `vercel` preset writes apps/web/.vercel/output in the Build
-      # Output API v3 layout, so Vercel itself never builds anything.
-      - name: Build
-        run: pnpm nx build web
+      # Both apps, then folded into one .vercel/output at the workspace root:
+      # static assets and the SSR function from web, the Nest function from
+      # api, and one routing table over the top.
+      - name: Build both apps
+        run: pnpm nx run-many -t build build-vercel --projects=web,api
 
-      - name: Deploy
-        id: deploy
-        working-directory: apps/web
-        run: |
-          url="$(vercel deploy --prebuilt ${{ github.ref == 'refs/heads/master' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }})"
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "Deployed to $url"
-
-  deploy-api:
-    name: Deploy api
-    needs: check
-    if: needs.check.outputs.api == 'true'
-    runs-on: ubuntu-latest
-    environment:
-      name: ${{ github.ref == 'refs/heads/master' && 'production' || 'preview' }}
-      url: ${{ steps.deploy.outputs.url }}
-    env:
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_API }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-
-      - name: Install Vercel CLI
-        run: npm install -g vercel@latest
-
-      - name: Link Vercel project
-        working-directory: apps/api
-        run: vercel pull --yes --environment=${{ github.ref == 'refs/heads/master' && 'production' || 'preview' }} --token=${{ secrets.VERCEL_TOKEN }}
-
-      # Bundles src/serverless.ts into apps/api/.vercel/output and writes the
-      # routing and cron config next to it.
-      - name: Build
-        run: pnpm nx build-vercel api
+      - name: Merge into one deployment
+        run: node tools/vercel/merge-output.mjs
 
       # Before the new code goes live, not after, so the schema is never behind
       # the code reading it. `migrate deploy` only applies committed migrations
@@ -153,7 +119,7 @@ jobs:
       # MIGRATE_DATABASE_URL should be a *direct* connection: a transaction
       # pooler cannot run the DDL and advisory locks a migration needs.
       - name: Apply database migrations
-        if: github.ref == 'refs/heads/master'
+        if: github.ref == 'refs/heads/dev'
         working-directory: apps/api
         env:
           DATABASE_URL: ${{ secrets.MIGRATE_DATABASE_URL }}
@@ -161,8 +127,7 @@ jobs:
 
       - name: Deploy
         id: deploy
-        working-directory: apps/api
         run: |
-          url="$(vercel deploy --prebuilt ${{ github.ref == 'refs/heads/master' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }})"
+          url="$(vercel deploy --prebuilt ${{ github.ref == 'refs/heads/dev' && '--prod' || '' }} --token=${{ secrets.VERCEL_TOKEN }})"
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Deployed to $url"

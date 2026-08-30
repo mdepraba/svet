@@ -1,0 +1,609 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "./generated/"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------- Master Data ----------------------
+model User {
+  id    String @id @default(uuid()) @db.Uuid
+  name  String
+  email String @unique
+  // Optional: an account that only ever arrives through an identity provider
+  // has no local credential to store. A null here means "cannot sign in with a
+  // password", not "empty password".
+  password String?
+  roleId   String  @map("role_id") @db.Uuid
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  role                          Role                    @relation(fields: [roleId], references: [id])
+  identities                    AuthIdentity[]
+  refreshTokens                 RefreshToken[]
+  visits                        Visit[]
+  ownersCreated                 Owner[]                 @relation("OwnerCreatedBy")
+  ownersUpdated                 Owner[]                 @relation("OwnerUpdatedBy")
+  patientCreated                Patient[]               @relation("PatientCreatedBy")
+  patientUpdated                Patient[]               @relation("PatientUpdatedBy")
+  productsCreated               Product[]               @relation("ProductCreatedBy")
+  productsUpdated               Product[]               @relation("ProductUpdatedBy")
+  productCategoriesCreated      ProductCategory[]       @relation("ProductCategoryCreatedBy")
+  productCategoriesUpdated      ProductCategory[]       @relation("ProductCategoryUpdatedBy")
+  treatmentsCreated             Treatment[]             @relation("TreatmentCreatedBy")
+  treatmentsUpdated             Treatment[]             @relation("TreatmentUpdatedBy")
+  visitsCreated                 Visit[]                 @relation("VisitCreatedBy")
+  visitsUpdated                 Visit[]                 @relation("VisitUpdatedBy")
+  medicalRecordsCreated         MedicalRecord[]         @relation("MedicalRecordCreatedBy")
+  medicalRecordsUpdated         MedicalRecord[]         @relation("MedicalRecordUpdatedBy")
+  invoicesCreated               Invoice[]               @relation("InvoiceCreatedBy")
+  invoicesUpdated               Invoice[]               @relation("InvoiceUpdatedBy")
+  invoiceDetailsCreated         InvoiceDetail[]         @relation("InvoiceDetailCreatedBy")
+  invoiceDetailsUpdated         InvoiceDetail[]         @relation("InvoiceDetailUpdatedBy")
+  medUsagesCreated              MedicalUsage[]          @relation("MedicalUsageCreatedBy")
+  medUsagesUpdated              MedicalUsage[]          @relation("MedicalUsageUpdatedBy")
+  stockLedgersCreated           StockLedger[]           @relation("StockLedgerCreatedBy")
+  treatmentCategoriesCreated    TreatmentCategory[]     @relation("TreatmentCategoryCreatedBy")
+  treatmentCategoriesUpdated    TreatmentCategory[]     @relation("TreatmentCategoryUpdatedBy")
+  unitsCreated                  Unit[]                  @relation("UnitCreatedBy")
+  unitsUpdated                  Unit[]                  @relation("UnitUpdatedBy")
+  taxCreated                    Tax[]                   @relation("TaxCreatedBy")
+  taxUpdated                    Tax[]                   @relation("TaxUpdatedBy")
+  visitVets                     VisitDetail[]           @relation("VisitDetailVet")
+  visitDetailsCreated           VisitDetail[]           @relation("VisitDetailCreatedBy")
+  visitDetailsUpdated           VisitDetail[]           @relation("VisitDetailUpdatedBy")
+  visitTreatmentAssocsCreated   VisitTreatmentAssoc[]   @relation("VisitTreatmentAssocCreatedBy")
+  visitTreatmentAssocsUpdated   VisitTreatmentAssoc[]   @relation("VisitTreatmentAssocUpdatedBy")
+  visitProductAssocsCreated     VisitProductAssoc[]     @relation("VisitProductAssocCreatedBy")
+  visitProductAssocsUpdated     VisitProductAssoc[]     @relation("VisitProductAssocUpdatedBy")
+  treatmentProductAssocsCreated TreatmentProductAssoc[] @relation("TreatmentProductAssocCreatedBy")
+  treatmentProductAssocsUpdated TreatmentProductAssoc[] @relation("TreatmentProductAssocUpdatedBy")
+
+  @@map("user")
+}
+
+/// One external account linked to a User — a Google account, and whatever
+/// provider comes next. The email is stored for auditing only; `subject` is the
+/// provider's own immutable id and is what a returning sign-in matches on,
+/// because a person can change the email on their Google account.
+model AuthIdentity {
+  id       String  @id @default(uuid()) @db.Uuid
+  userId   String  @map("user_id") @db.Uuid
+  provider String
+  subject  String
+  email    String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // One provider account belongs to exactly one user, and one user holds at
+  // most one account per provider.
+  @@unique([provider, subject])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("auth_identity")
+}
+
+
+model RefreshToken {
+  id           String    @id @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  familyId     String    @map("family_id") @db.Uuid
+  fingerprint  String
+  expiresAt    DateTime  @map("expires_at")
+  revokedAt    DateTime? @map("revoked_at")
+  replacedById String?   @map("replaced_by_id") @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_token")
+}
+
+model Role {
+  id   String @id @default(uuid()) @db.Uuid
+  name String @unique
+
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  users User[]
+
+  @@map("role")
+}
+
+model Owner {
+  id      String  @id @default(uuid()) @db.Uuid
+  name    String
+  email   String? @unique
+  phone   String?
+  address String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  invoices      Invoice[]
+  patients      Patient[]
+  visits        Visit[]
+  createdByUser User?     @relation("OwnerCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?     @relation("OwnerUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("owner")
+}
+
+model Patient {
+  id      String    @id @default(uuid()) @db.Uuid
+  name    String
+  species String
+  breed   String?
+  sex     String?
+  color   String?
+  dob     DateTime?
+  ownerId String    @map("owner_id") @db.Uuid
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  medicalRecords MedicalRecord[]
+  visitDetails   VisitDetail[]
+  owner          Owner           @relation(fields: [ownerId], references: [id])
+  createdByUser  User?           @relation("PatientCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser  User?           @relation("PatientUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("patient")
+}
+
+model Product {
+  id               String   @id @default(uuid()) @db.Uuid
+  sku              String   @unique
+  name             String
+  categoryId       String   @map("product_category_id") @db.Uuid
+  purchaseUnit     String
+  dispensingUnit   String
+  conversionFactor Decimal  @db.Decimal(10, 3)
+  basePrice        Decimal  @map("base_price") @db.Decimal(12, 2)
+  grossPrice       Decimal  @map("gross_price") @db.Decimal(12, 2)
+  taxId            String   @map("tax_id") @db.Uuid
+  maxDiscount      Decimal? @map("max_discount") @db.Decimal(5, 2)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  invoiceDetails         InvoiceDetail[]
+  medUsages              MedicalUsage[]
+  stockLedgers           StockLedger[]
+  productCategory        ProductCategory         @relation(fields: [categoryId], references: [id])
+  tax                    Tax?                    @relation(fields: [taxId], references: [id])
+  createdByUser          User?                   @relation("ProductCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser          User?                   @relation("ProductUpdatedBy", fields: [updatedBy], references: [id])
+  productStocks          ProductStock[]
+  treatmentProductAssocs TreatmentProductAssoc[]
+  visitProductAssocs     VisitProductAssoc[]
+
+  @@map("product")
+}
+
+model Treatment {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  categoryId  String   @map("treatment_category_id") @db.Uuid
+  isActive    Boolean  @default(true)
+  basePrice   Decimal  @map("base_price") @db.Decimal(12, 2)
+  grossPrice  Decimal  @map("gross_price") @db.Decimal(12, 2)
+  taxId       String   @map("tax_id") @db.Uuid
+  maxDiscount Decimal? @map("max_discount") @db.Decimal(5, 2)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  invoiceDetails         InvoiceDetail[]
+  visitTreatmentAssocs   VisitTreatmentAssoc[]
+  tax                    Tax?                    @relation(fields: [taxId], references: [id])
+  treatmentCategory      TreatmentCategory       @relation(fields: [categoryId], references: [id])
+  createdByUser          User?                   @relation("TreatmentCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser          User?                   @relation("TreatmentUpdatedBy", fields: [updatedBy], references: [id])
+  treatmentProductAssocs TreatmentProductAssoc[]
+
+  @@map("treatment")
+}
+
+model ProductCategory {
+  id          String              @id @default(uuid()) @db.Uuid
+  name        String              @unique
+  type        ProductCategoryType
+  description String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  products      Product[]
+  createdByUser User?     @relation("ProductCategoryCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?     @relation("ProductCategoryUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("product_category")
+}
+
+model TreatmentCategory {
+  id          String              @id @default(uuid()) @db.Uuid
+  name        String              @unique
+  type        ProductCategoryType
+  description String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  treatments    Treatment[]
+  createdByUser User?       @relation("TreatmentCategoryCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?       @relation("TreatmentCategoryUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("treatment_category")
+}
+
+model TreatmentProductAssoc {
+  id          String @id @default(uuid()) @db.Uuid
+  treatmentId String @map("treatment_id") @db.Uuid
+  productId   String @map("product_id") @db.Uuid
+  qty         Int
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  treatment     Treatment @relation(fields: [treatmentId], references: [id])
+  product       Product   @relation(fields: [productId], references: [id])
+  createdByUser User?     @relation("TreatmentProductAssocCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?     @relation("TreatmentProductAssocUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("treatment_product_assoc")
+}
+
+model Unit {
+  id         String @id @default(uuid()) @db.Uuid
+  identifier String @unique
+  name       String
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  createdByUser User? @relation("UnitCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("UnitUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("unit")
+}
+
+model Tax {
+  id   String  @id @default(uuid()) @db.Uuid
+  name String  @unique
+  rate Decimal @db.Decimal(5, 2)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  products      Product[]
+  createdByUser User?       @relation("TaxCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?       @relation("TaxUpdatedBy", fields: [updatedBy], references: [id])
+  treatments    Treatment[]
+
+  @@map("tax")
+}
+
+// ---------------------- Transaction Data ----------------------
+model Visit {
+  id         String      @id @default(uuid()) @db.Uuid
+  userId     String      @map("user_id") @db.Uuid
+  ownerId    String      @map("owner_id") @db.Uuid
+  visitType  VisitType   @default(MEDIC)
+  status     VisitStatus @default(SCHEDULED)
+  visitDate  DateTime
+  scheduleAt DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  invoices      Invoice[]
+  visitDetails  VisitDetail[]
+  owner         Owner         @relation(fields: [ownerId], references: [id])
+  user          User          @relation(fields: [userId], references: [id])
+  createdByUser User?         @relation("VisitCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?         @relation("VisitUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("visit")
+}
+
+model VisitDetail {
+  id        String @id @default(uuid()) @db.Uuid
+  visitId   String @map("visit_id") @db.Uuid
+  patientId String @map("patient_id") @db.Uuid
+  vetId     String @map("vet_id") @db.Uuid
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  visitTreatmentAssocs VisitTreatmentAssoc[]
+  visitProductAssocs   VisitProductAssoc[]
+  medicalRecords       MedicalRecord[]
+  visit                Visit                 @relation(fields: [visitId], references: [id])
+  patient              Patient               @relation(fields: [patientId], references: [id])
+  vet                  User                  @relation("VisitDetailVet", fields: [vetId], references: [id])
+  createdByUser        User?                 @relation("VisitDetailCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser        User?                 @relation("VisitDetailUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("visit_detail")
+}
+
+model VisitTreatmentAssoc {
+  id            String @id @default(uuid()) @db.Uuid
+  visitDetailId String @db.Uuid
+  treatmentId   String @db.Uuid
+  qty           Int    @default(1)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  visitDetail        VisitDetail         @relation(fields: [visitDetailId], references: [id])
+  treatment          Treatment           @relation(fields: [treatmentId], references: [id])
+  visitProductAssocs VisitProductAssoc[]
+  createdByUser      User?               @relation("VisitTreatmentAssocCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser      User?               @relation("VisitTreatmentAssocUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("visit_treatment_assoc")
+}
+
+model VisitProductAssoc {
+  id                    String  @id @default(uuid()) @db.Uuid
+  visitDetailId         String  @db.Uuid
+  visitTreatmentAssocId String? @db.Uuid // null if product is set manually or not associated with a treatment
+  productId             String  @db.Uuid
+  qty                   Int
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  visitDetail         VisitDetail          @relation(fields: [visitDetailId], references: [id])
+  visitTreatmentAssoc VisitTreatmentAssoc? @relation(fields: [visitTreatmentAssocId], references: [id])
+  product             Product              @relation(fields: [productId], references: [id])
+  createdByUser       User?                @relation("VisitProductAssocCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser       User?                @relation("VisitProductAssocUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("visit_product_assoc")
+}
+
+model MedicalRecord {
+  id            String  @id @default(uuid()) @db.Uuid
+  visitDetailId String  @map("visitDetailId") @db.Uuid
+  patientId     String  @map("patient_id") @db.Uuid
+  anamnesis     String?
+  temperature   Float?
+  pulse         Int?
+  respiration   Int?
+  weight        Float?
+  notes         String?
+  diagnosis     String?
+  treatment     String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  MedicalUsages MedicalUsage[]
+  patient       Patient        @relation(fields: [patientId], references: [id])
+  visitDetails  VisitDetail    @relation(fields: [visitDetailId], references: [id])
+  createdByUser User?          @relation("MedicalRecordCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?          @relation("MedicalRecordUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("medical_record")
+}
+
+model MedicalUsage {
+  id              String  @id @default(uuid()) @db.Uuid
+  medicalRecordId String  @map("medical_record_id") @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  quantity        Decimal @db.Decimal(10, 3)
+  notes           String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  medicalRecord MedicalRecord @relation(fields: [medicalRecordId], references: [id])
+  product       Product       @relation(fields: [productId], references: [id])
+  createdByUser User?         @relation("MedicalUsageCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?         @relation("MedicalUsageUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("medical_usage")
+}
+
+model Invoice {
+  id            String        @id @default(uuid()) @db.Uuid
+  identifier    String        @unique
+  ownerId       String?       @map("owner_id") @db.Uuid
+  visitId       String?       @map("visit_id") @db.Uuid
+  totalBase     Decimal       @db.Decimal(12, 2)
+  totalGross    Decimal       @db.Decimal(12, 2)
+  totalTax      Decimal       @db.Decimal(12, 2)
+  totalDiscount Decimal       @default(0) @db.Decimal(12, 2)
+  paymentMethod PaymentMethod
+  paidAt        DateTime?
+  status        InvoiceStatus @default(PENDING)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  invoiceDetails InvoiceDetail[]
+  owner          Owner?          @relation(fields: [ownerId], references: [id])
+  visit          Visit?          @relation(fields: [visitId], references: [id])
+  createdByUser  User?           @relation("InvoiceCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser  User?           @relation("InvoiceUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("invoice")
+}
+
+model InvoiceDetail {
+  id          String  @id @default(uuid()) @db.Uuid
+  invoiceId   String  @map("invoice_id") @db.Uuid
+  productId   String? @map("product_id") @db.Uuid
+  treatmentId String? @map("treatmentId") @db.Uuid
+  quantity    Decimal @db.Decimal(10, 3)
+  unitPrice   Decimal @db.Decimal(12, 2)
+  subtotal    Decimal @db.Decimal(12, 2)
+  notes       String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+  createdBy String?   @map("created_by") @db.Uuid
+  updatedBy String?   @map("updated_by") @db.Uuid
+
+  invoice       Invoice    @relation(fields: [invoiceId], references: [id])
+  product       Product?   @relation(fields: [productId], references: [id])
+  treatment     Treatment? @relation(fields: [treatmentId], references: [id])
+  createdByUser User?      @relation("InvoiceDetailCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?      @relation("InvoiceDetailUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@map("invoice_detail")
+}
+
+// ---------------------- Summary ----------------------
+model ProductStock {
+  id        String  @id @default(uuid()) @db.Uuid
+  productId String  @unique @map("product_id") @db.Uuid
+  totalQty  Decimal @db.Decimal(10, 3)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("product_stock")
+}
+
+// ---------------------- Log ----------------------
+model StockLedger {
+  id            String       @id @default(uuid()) @db.Uuid
+  productId     String       @map("product_id") @db.Uuid
+  movementType  MovementType
+  movementRef   String?
+  changeQty     Decimal      @db.Decimal(10, 3)
+  costUnitPrice Decimal?     @db.Decimal(12, 2)
+  notes         String?
+
+  createdAt DateTime @default(now())
+  createdBy String?  @map("created_by") @db.Uuid
+
+  product       Product @relation(fields: [productId], references: [id])
+  createdByUser User?   @relation("StockLedgerCreatedBy", fields: [createdBy], references: [id])
+
+  @@map("stock_ledger")
+}
+
+// ---------------------- Config ----------------------
+model Setting {
+  id    String @id @default(uuid()) @db.Uuid
+  key   String @unique
+  value String
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @default(now()) @updatedAt
+  deletedAt DateTime?
+
+  @@map("setting")
+}
+
+enum VisitType {
+  MEDIC
+  NON_MEDIC
+}
+
+enum VisitStatus {
+  SCHEDULED
+  ONGOING // for today scheduled and draft save
+  FINISHED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  QRIS
+  TRANSFER
+}
+
+enum MovementType {
+  PURCHASE_IN
+  SALE_OUT
+  MEDICAL_USE
+  RETURN_IN
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum ProductCategoryType {
+  MEDIC
+  NON_MEDIC
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  CANCELLED
+}

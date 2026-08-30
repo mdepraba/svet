@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "files": [],
+  "include": [],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    }
+  ],
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@svet-monorepo/schemas": ["../../libs/schemas/src/index.ts"]
+    }
+  }
+}

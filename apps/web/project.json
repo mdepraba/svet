@@ -1,0 +1,35 @@
+{
+  "name": "web",
+  "root": "apps/web",
+  "projectType": "application",
+  "tags": [],
+  "targets": {
+    "serve": {
+      "executor": "@nx/vite:dev-server",
+      "options": { "buildTarget": "web:build" }
+    },
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "vite build --config apps/web/vite.config.mts"
+      },
+      "outputs": [
+        "{projectRoot}/.vercel/output",
+        "{projectRoot}/.output",
+        "{workspaceRoot}/dist/apps/web"
+      ],
+      "inputs": ["production", "^production", { "env": "NITRO_PRESET" }],
+      "cache": true,
+      "dependsOn": ["typecheck"]
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "tsc -p tsconfig.json --noEmit",
+        "cwd": "apps/web"
+      },
+      "cache": true,
+      "inputs": ["default", "^production"]
+    }
+  }
+}

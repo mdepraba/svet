@@ -1,0 +1,27 @@
+{
+  "name": "ui-ux-expert-skill",
+  "version": "1.0.0",
+  "description": "Technical workflow and best practices for ui-ux-expert agent: React component implementation, shadcn/ui composition, Tailwind CSS styling, WCAG 2.1 AA accessibility, and Core Web Vitals optimization",
+  "agent": "ui-ux-expert",
+  "technologies": [
+    "React 18+",
+    "Next.js 14+ App Router",
+    "TypeScript",
+    "shadcn/ui",
+    "Aceternity UI",
+    "Tailwind CSS",
+    "TanStack Query",
+    "React Hook Form",
+    "Zod",
+    "Playwright (E2E tests)",
+    "Framer Motion",
+    "next-intl"
+  ],
+  "mcps_required": [
+    "context7",
+    "shadcn",
+    "chrome-devtools"
+  ],
+  "references_count": 0,
+  "last_updated": "2025-01-26"
+}
